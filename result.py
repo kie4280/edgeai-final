@@ -5,8 +5,6 @@ from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
-from vllm import LLM
-
 
 #####################################################################
 # === SPEC NOTICE ===
@@ -56,15 +54,15 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
   return input_ids
 
 
-def load_model(max_num_tokens=16384):
+def load_model():
   # Load your model here
   device = 'cuda:0'
   model_name = "meta-llama/Llama-3.2-3B-Instruct"
-  # Set max_num_batched_tokens to tune performance
-  model = LLM(
-      model=model_name,
-      max_num_batched_tokens=max_num_tokens,
-      dtype=torch.float16)
+  model = AutoModelForCausalLM.from_pretrained(
+      model_name,
+      torch_dtype=torch.float16,
+      device_map=device,
+  )
   return model
 
 
@@ -84,8 +82,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen)
-                                :((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
