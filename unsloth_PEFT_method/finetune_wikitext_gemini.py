@@ -131,7 +131,7 @@ print("\nMerging LoRA adapters and saving the full model (for inference)...")
 model.save_pretrained_merged(
     f"{OUTPUT_DIR}_merged",
     tokenizer,
-    save_method="merged_4bit")
+    save_method="merged_4bit",)
 print(f"Full merged model saved to {OUTPUT_DIR}_merged")
 
 # Optional: Convert and save the model in GGUF format (for llama.cpp/Ollama)

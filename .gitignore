@@ -1,4 +1,6 @@
 outputs
 lora_model/
 unsloth_compiled_cache/
+unsloth_wikitext_v2_model*/
 logs/
+result.csv

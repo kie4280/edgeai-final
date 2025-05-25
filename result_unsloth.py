@@ -80,7 +80,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
   test_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
 
   test_enc = tokenizer("\n\n".join(test_dataset["text"]), return_tensors="pt")
-  model.seqlen = 2048
+  model.seqlen = 256
   test_enc = test_enc.input_ids.to(device)
 
   nsamples = test_enc.numel() // model.seqlen
@@ -92,7 +92,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
@@ -115,7 +115,6 @@ def main():
   model_name = "meta-llama/Llama-3.2-3B-Instruct"
 
   model, tokenizer = load_model()
-  tokenizer = AutoTokenizer.from_pretrained(model_name)
 
   # === (Optional) Uncomment the following lines if using the custom generate() function. ===
   # model.prefill_forward = model.forward
