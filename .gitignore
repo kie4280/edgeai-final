@@ -1,3 +1,4 @@
-unsloth_PEFT_method/outputs
-unsloth_PEFT_method/lora_model/
-unsloth_PEFT_method/unsloth_compiled_cache/
+outputs
+lora_model/
+unsloth_compiled_cache/
+logs/
