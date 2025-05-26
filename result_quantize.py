@@ -5,6 +5,7 @@ from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
+from hqq.utils.patching import prepare_for_inference
 
 #####################################################################
 # === SPEC NOTICE ===
@@ -57,6 +58,7 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
 def load_model():
   # Load your model here
   device = 'cuda:0'
+  backend = 'gemlite'
   # model_name = "devshaheen/llama-3.2-3b-Instruct-finetune"
   # model_name = "meta-llama/Llama-3.2-3B-Instruct-SpinQuant_INT4_EO8"
   # model_name = "meta-llama/Llama-3.2-3B-Instruct"
@@ -71,6 +73,14 @@ def load_model():
       device_map=device,
       # quantization_config=quantization_config,
   )
+  model.eval()
+  model.forward = torch.compile(
+      model.forward,
+      mode='max-autotune',
+      dynamic=False,
+      fullgraph=True)
+  prepare_for_inference(model, backend=backend)
+
   return model
 
 
@@ -90,7 +100,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
