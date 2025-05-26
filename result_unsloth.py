@@ -1,3 +1,4 @@
+from unsloth import FastLanguageModel
 import torch
 import torch.nn as nn
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -5,7 +6,6 @@ from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
-from unsloth import FastLanguageModel
 
 
 #####################################################################
@@ -60,6 +60,12 @@ def load_model(max_num_tokens=256):
   # Load your model here
   device = 'cuda:0'
   model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  # tokenizer = AutoTokenizer.from_pretrained(model_name)
+  # model = AutoModelForCausalLM.from_pretrained(
+  #     model_name,
+  #     torch_dtype=torch.float16,
+  #     device_map=device,
+  # )
   # Set max_num_batched_tokens to tune performance
   # model = LLM(
   #     model=model_name,
@@ -67,11 +73,9 @@ def load_model(max_num_tokens=256):
   #     dtype=torch.float16)
   model, tokenizer = FastLanguageModel.from_pretrained(
       model_name="unsloth/Llama-3.2-3B-Instruct-bnb-4bit",
-      max_seq_length=max_num_tokens,
+      max_seq_length=2048,
       dtype=None,  # for auto detection
       load_in_4bit=True,
-      # token = "hf_...", # use one if using gated models like
-      # meta-llama/Llama-2-7b-hf
   )
   return model, tokenizer
 
@@ -80,7 +84,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
   test_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
 
   test_enc = tokenizer("\n\n".join(test_dataset["text"]), return_tensors="pt")
-  model.seqlen = 256
+  model.seqlen = 2048
   test_enc = test_enc.input_ids.to(device)
 
   nsamples = test_enc.numel() // model.seqlen
@@ -92,7 +96,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),

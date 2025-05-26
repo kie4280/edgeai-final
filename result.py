@@ -57,7 +57,8 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
 def load_model():
   # Load your model here
   device = 'cuda:0'
-  model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  # model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  model_name = "meta-llama/Llama-3.2-3B-Instruct-QLORA_INT4_EO8"
   model = AutoModelForCausalLM.from_pretrained(
       model_name,
       torch_dtype=torch.float16,

@@ -100,7 +100,7 @@ def main():
     device = 'cuda:0'
     backend = 'gemlite'
     
-    model_name = "meta-llama/Llama-3.2-1B-Instruct"   
+    model_name = "meta-llama/Llama-3.2-3B-Instruct"   
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.float16,
