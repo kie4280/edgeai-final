@@ -1,11 +1,14 @@
 import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, HqqConfig
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, HqqConfig, StaticCache
 from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
-from hqq.utils.patching import prepare_for_inference
+from hqq.utils.patching import prepare_for_inference, recommended_inductor_config_setter
+from hqq_utils import AutoHQQHFModel, get_size_of_model
+
+from quant_cfg import get_quant_config_slm
 
 #####################################################################
 # === SPEC NOTICE ===
@@ -19,7 +22,7 @@ from hqq.utils.patching import prepare_for_inference
 # By default, we use model.generate() for simplicity and general use.
 
 
-def generate(model, input_ids, past_key_values, max_new_tokens):
+def generate(model, input_ids, past_key_values, max_new_tokens=256):
   input_ids = input_ids.clone()
   with torch.no_grad():
     # Prefill
@@ -54,34 +57,49 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
 
   return input_ids
 
+def get_quant_config():
+  # Each linear layer with the same tag will use a dedicated quantization config
+  q4_config = {'nbits':8, 'group_size':64}
+  q3_config = {'nbits':8, 'group_size':32}
+
+  quant_config  = HqqConfig(dynamic_config={
+    'self_attn.q_proj':q4_config,
+    'self_attn.k_proj':q4_config,
+    'self_attn.v_proj':q4_config,
+    'self_attn.o_proj':q4_config,
+
+    'mlp.gate_proj':q3_config,
+    'mlp.up_proj'  :q3_config,
+    'mlp.down_proj':q3_config,
+  })
+  return quant_config
 
 def load_model():
   # Load your model here
   device = 'cuda:0'
-  backend = 'gemlite'
   # model_name = "devshaheen/llama-3.2-3b-Instruct-finetune"
   # model_name = "meta-llama/Llama-3.2-3B-Instruct-SpinQuant_INT4_EO8"
   model_name = "meta-llama/Llama-3.2-3B-Instruct"
   # model_name = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
-  quantization_config = BitsAndBytesConfig(
-      load_in_4bit=True,
-      bnb_4bit_use_double_quant=True,  # Recommended for slightly better performance
-  )
-  hqq_config = HqqConfig(nbits=4, group_size=128)
+  quant_config = get_quant_config()
   model = AutoModelForCausalLM.from_pretrained(
       model_name,
       torch_dtype=torch.float16,
       device_map=device,
-      quantization_config=hqq_config,
+      quantization_config=quant_config,
   )
-  prepare_for_inference(model, backend=backend)
+  tokenizer = AutoTokenizer.from_pretrained(
+      model_name,
+      torch_dtype=torch.float16,
+      device_map=device
+  )
   model.eval()
   model = torch.compile(
       model,
       mode='max-autotune',
       dynamic=False,
       fullgraph=True)
-  return model
+  return model, tokenizer
 
 
 def evaluate_ppl(model, tokenizer, device="cuda:0"):
@@ -100,7 +118,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
@@ -117,13 +135,22 @@ def main():
   ############## Set Up ##############
   torch.manual_seed(0)
   random.seed(0)
+  recommended_inductor_config_setter()
 
   max_new_tokens = 256    # Number of new tokens to generate
   device = 'cuda:0'
-  model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  backend = 'gemlite'
+  model, tokenizer = load_model()
 
-  model = load_model()
-  tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+  # AutoHQQHFModel.quantize_model(
+  #     model,
+  #     quant_config=quant_config,
+  #     compute_dtype=torch.float16,
+  #     device=device)
+
+  prepare_for_inference(model, backend=backend)
+  torch.cuda.empty_cache()
 
   # === (Optional) Uncomment the following lines if using the custom generate() function. ===
   # model.prefill_forward = model.forward
@@ -170,16 +197,23 @@ def main():
     start.record()
 
     # === Default: Use model.generate() for end-to-end timing ===
-    generated = model.generate(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        max_new_tokens=max_new_tokens,
-        pad_token_id=tokenizer.eos_token_id,
-    )
+    # generated = model.generate(
+    #     input_ids=input_ids,
+    #     attention_mask=attention_mask,
+    #     max_new_tokens=max_new_tokens,
+    #     pad_token_id=tokenizer.eos_token_id,
+    # )
 
     # === Optional: Use custom generate() if uncommented ===
-    # generated = generate(model, input_ids, past_key_values, max_new_tokens)
-    # past_key_values.reset()
+    past_key_values = StaticCache(
+        config=model.config,
+        max_batch_size=1,
+        max_cache_len=max_new_tokens + 16,
+        device=model.device,
+        dtype=torch.float16
+    )
+    generated = generate(model, input_ids, past_key_values, max_new_tokens)
+    past_key_values.reset()
 
     end.record()
     torch.cuda.synchronize()
