@@ -57,22 +57,24 @@ def generate(model, input_ids, past_key_values, max_new_tokens=256):
 
   return input_ids
 
+
 def get_quant_config():
   # Each linear layer with the same tag will use a dedicated quantization config
-  q4_config = {'nbits':8, 'group_size':64}
-  q3_config = {'nbits':8, 'group_size':32}
+  q4_config = {'nbits': 8, 'group_size': 64}
+  q3_config = {'nbits': 8, 'group_size': 32}
 
-  quant_config  = HqqConfig(dynamic_config={
-    'self_attn.q_proj':q4_config,
-    'self_attn.k_proj':q4_config,
-    'self_attn.v_proj':q4_config,
-    'self_attn.o_proj':q4_config,
+  quant_config = HqqConfig(dynamic_config={
+      'self_attn.q_proj': q4_config,
+      'self_attn.k_proj': q4_config,
+      'self_attn.v_proj': q4_config,
+      'self_attn.o_proj': q4_config,
 
-    'mlp.gate_proj':q3_config,
-    'mlp.up_proj'  :q3_config,
-    'mlp.down_proj':q3_config,
+      'mlp.gate_proj': q3_config,
+      'mlp.up_proj': q3_config,
+      'mlp.down_proj': q3_config,
   })
   return quant_config
+
 
 def load_model():
   # Load your model here
@@ -86,7 +88,7 @@ def load_model():
       model_name,
       torch_dtype=torch.float16,
       device_map=device,
-      quantization_config=quant_config,
+      # quantization_config=quant_config,
   )
   tokenizer = AutoTokenizer.from_pretrained(
       model_name,
@@ -96,7 +98,7 @@ def load_model():
   model.eval()
   model = torch.compile(
       model,
-      mode='max-autotune',
+      mode='default',
       dynamic=False,
       fullgraph=True)
   return model, tokenizer
@@ -118,7 +120,8 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen)
+                                :((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
@@ -141,7 +144,6 @@ def main():
   device = 'cuda:0'
   backend = 'gemlite'
   model, tokenizer = load_model()
-
 
   # AutoHQQHFModel.quantize_model(
   #     model,
@@ -190,6 +192,13 @@ def main():
   attention_mask = inputs["attention_mask"]
   tputs = []
   time_record = []
+  past_key_values = StaticCache(
+      config=model.config,
+      max_batch_size=1,
+      max_cache_len=max_new_tokens + 16,
+      device=model.device,
+      dtype=torch.float16
+  )
   for _ in tqdm(range(10), desc="Test Inference"):
     torch.cuda.synchronize()
     start = torch.cuda.Event(enable_timing=True)
@@ -205,14 +214,15 @@ def main():
     # )
 
     # === Optional: Use custom generate() if uncommented ===
-    past_key_values = StaticCache(
-        config=model.config,
-        max_batch_size=1,
-        max_cache_len=max_new_tokens + 16,
-        device=model.device,
-        dtype=torch.float16
+    # generated = generate(model, input_ids, past_key_values, max_new_tokens)
+    generated = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        max_new_tokens=max_new_tokens,
+        pad_token_id=tokenizer.eos_token_id,
+        use_cache=True,
+        past_key_values=past_key_values,
     )
-    generated = generate(model, input_ids, past_key_values, max_new_tokens)
     past_key_values.reset()
 
     end.record()
