@@ -5,6 +5,9 @@ from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
+from LLMPruner.peft import PeftModel
+from transformers import StaticCache
+import argparse
 
 #####################################################################
 # === SPEC NOTICE ===
@@ -20,6 +23,8 @@ import numpy as np
 
 def generate(model, input_ids, past_key_values, max_new_tokens):
   input_ids = input_ids.clone()
+
+  print("input_ids:", input_ids.shape)
   with torch.no_grad():
     # Prefill
     outputs = model.prefill_forward(
@@ -32,6 +37,7 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
     )
     past_key_values = outputs.past_key_values
     next_token = torch.argmax(outputs.logits, dim=-1)
+
     input_ids = torch.cat([input_ids, next_token], dim=-1)
 
     # Token-by-token Decoding
@@ -54,7 +60,7 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
   return input_ids
 
 
-def load_model():
+def load_model(args):
   # Load your model here
   device = 'cuda:0'
   model_name = "meta-llama/Llama-3.2-1B-Instruct"
@@ -64,12 +70,22 @@ def load_model():
       device_map=device,
   )
   tokenizer = AutoTokenizer.from_pretrained(model_name)
-  
-  if torch.cuda.is_available():
-    model.cuda()
-    
-  return tokenizer, model
+	
+  if args.tuned_dir != None:
+    model = PeftModel.from_pretrained(
+        model,
+        args.tuned_dir,
+        torch_dtype=torch.float16,
+    )
 
+  if torch.cuda.is_available():
+    model = model.cuda()
+
+  model.half()
+  model.eval()
+
+  return model, tokenizer
+  
 
 def evaluate_ppl(model, tokenizer, device="cuda:0"):
   test_dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="test")
@@ -100,7 +116,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
   return ppl.item()
 
 
-def main():
+def main(args):
   ############## Set Up ##############
   torch.manual_seed(0)
   random.seed(0)
@@ -108,10 +124,10 @@ def main():
   max_new_tokens = 256    # Number of new tokens to generate
   device = 'cuda:0'
 
-  tokenizer, model = load_model()
+  model, tokenizer = load_model(args)
 
   # === (Optional) Uncomment the following lines if using the custom generate() function. ===
-  # model.prefill_forward = model.forward
+  model.prefill_forward = model.forward
 
   warmup_prompt = "Explain what AI is."
   inputs = tokenizer(warmup_prompt, return_tensors="pt").to(device)
@@ -119,18 +135,26 @@ def main():
   attention_mask = inputs["attention_mask"]
 
   # === (Optional) Set up StaticCache for manual KV cache management ===
-  # from transformers import StaticCache
-  # past_key_values = StaticCache(
-  #     config=model.config,
-  #     max_batch_size=1,
-  #     max_cache_len=max_new_tokens + 16,
-  #     device=model.device,
-  #     dtype=torch.float16
-  # )
+  past_key_values = StaticCache(
+      config=model.config,
+      max_batch_size=1,
+      max_cache_len=max_new_tokens + 16,
+      device=model.device,
+      dtype=torch.float16
+  )
   ####################################################################
 
-  for i in tqdm(range(5), desc="Warm Up..."):
+  for i in tqdm(range(10), desc="Warm Up..."):
     #  === Default: use model.generate() for end-to-end warm-up ===
+    # _ = model.generate(
+    #   input_ids=input_ids,
+    #   attention_mask=attention_mask,
+    #   max_new_tokens=max_new_tokens,
+    #   pad_token_id=tokenizer.eos_token_id,
+    #   use_cache=True,
+    #   past_key_values=past_key_values,
+    # )
+    past_key_values.reset()
     _ = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -200,4 +224,11 @@ def main():
 
 
 if __name__ == '__main__':
-  main()
+
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--pruned", action="store_true")
+	parser.add_argument("--pruned_model", type=str, default=None)
+	parser.add_argument("--tuned_dir", type=str, default=None)
+	args = parser.parse_args()
+
+	main(args)
