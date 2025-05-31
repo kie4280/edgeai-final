@@ -457,9 +457,9 @@ def main():
                     param.requires_grad = True
                     logger.info(f"Re-enabled gradients for: {name}")
         
-        # Enable gradient checkpointing before wrapping with DDP
-        if hasattr(model, 'gradient_checkpointing_enable'):
-            model.gradient_checkpointing_enable()
+        # # Enable gradient checkpointing before wrapping with DDP
+        # if hasattr(model, 'gradient_checkpointing_enable'):
+        #     model.gradient_checkpointing_enable()
         # Disable caching when using gradient checkpointing
         if hasattr(model.config, 'use_cache'):
             model.config.use_cache = False
