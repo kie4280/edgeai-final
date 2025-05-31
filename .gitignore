@@ -5,3 +5,4 @@ unsloth_wikitext_v2_model*/
 logs/
 result.csv
 __pycache__/
+wandb/
