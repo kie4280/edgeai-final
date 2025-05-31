@@ -5,8 +5,9 @@ from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
-from LLMPruner.peft import PeftModel
 from transformers import StaticCache
+
+from peft import get_peft_model, PeftModel
 import argparse
 
 #####################################################################
@@ -63,7 +64,7 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
 def load_model(args):
   # Load your model here
   device = 'cuda:0'
-  model_name = "meta-llama/Llama-3.2-1B-Instruct"
+  model_name = "meta-llama/Llama-3.2-1B"
   model = AutoModelForCausalLM.from_pretrained(
       model_name,
       torch_dtype=torch.float16,
@@ -71,10 +72,10 @@ def load_model(args):
   )
   tokenizer = AutoTokenizer.from_pretrained(model_name)
 	
-  if args.tuned_dir != None:
+  if args.lora_model != None:
     model = PeftModel.from_pretrained(
         model,
-        args.tuned_dir,
+        args.lora_model,
         torch_dtype=torch.float16,
     )
 
@@ -225,10 +226,11 @@ def main(args):
 
 if __name__ == '__main__':
 
-	parser = argparse.ArgumentParser()
-	parser.add_argument("--pruned", action="store_true")
-	parser.add_argument("--pruned_model", type=str, default=None)
-	parser.add_argument("--tuned_dir", type=str, default=None)
-	args = parser.parse_args()
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--pruned", action="store_true")
+  parser.add_argument("--pruned_model", type=str, default=None)
+  parser.add_argument("--tuned_dir", type=str, default=None)
+  parser.add_argument("--lora_model", type=str, default=None)
+  args = parser.parse_args()
 
-	main(args)
+  main(args)

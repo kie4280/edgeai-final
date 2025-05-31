@@ -18,7 +18,8 @@ elif [ "$1" == "distill" ]; then
 
 elif [ "$1" == "result" ]; then 
     python result.py \
-        --tuned_dir tune_log/llama4.2-1B/
+        --tuned_dir tune_log/llama4.2-1B/ \
+        --lora_model torchtune/llama3.2_3B_to_1B/epoch_4
 fi
 
 # if [ "$1" == "finetune" ]; then 
