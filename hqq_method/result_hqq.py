@@ -7,7 +7,8 @@ import random
 import numpy as np
 from hqq.utils.patching import prepare_for_inference, recommended_inductor_config_setter
 from hqq.models.hf.base import AutoHQQHFModel
-from hqq.core.quantize import BaseQuantizeConfig
+from hqq.models.base import HQQLinear
+from hqq.core.quantize import BaseQuantizeConfig, HQQBackend
 
 from quant_cfg import get_quant_config_slm
 
@@ -123,8 +124,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen)
-                                :((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
@@ -142,6 +142,7 @@ def main():
   torch.manual_seed(0)
   random.seed(0)
   recommended_inductor_config_setter()
+  HQQLinear.set_backend(HQQBackend.PYTORCH_COMPILE)  # Compiled Pytorch
 
   max_new_tokens = 256    # Number of new tokens to generate
   device = 'cuda:0'
@@ -159,7 +160,6 @@ def main():
 
   # === (Optional) Uncomment the following lines if using the custom generate() function. ===
   # model.prefill_forward = model.forward
-
 
   warmup_prompt = "Explain what AI is."
   inputs = tokenizer(warmup_prompt, return_tensors="pt").to(device)
