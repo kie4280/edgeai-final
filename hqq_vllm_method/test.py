@@ -106,46 +106,46 @@ def main():
     backend = 'gemlite'
     
     model_name = "meta-llama/Llama-3.2-3B-Instruct"
-    model = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.float16,
-        device_map=device,
-    )
-    model.eval() 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    # model = AutoModelForCausalLM.from_pretrained(
+    #     model_name,
+    #     torch_dtype=torch.float16,
+    #     device_map=device,
+    # )
+    # model.eval() 
+    # tokenizer = AutoTokenizer.from_pretrained(model_name)
     
-    # Separate Prefill & Decode Forwarding Function
-    model.prefill_forward = model.forward
-    model.forward = torch.compile(model.forward, mode='max-autotune', dynamic=False, fullgraph=True)
-    #####################################
+    # # Separate Prefill & Decode Forwarding Function
+    # model.prefill_forward = model.forward
+    # model.forward = torch.compile(model.forward, mode='max-autotune', dynamic=False, fullgraph=True)
+    # #####################################
     
-    # Original Model
+    # # Original Model
     warmup_prompt = "Explain what AI is."
-    input_ids = tokenizer(warmup_prompt, return_tensors="pt").input_ids.to(device)
-    past_key_values = StaticCache(
-        config=model.config, 
-        max_batch_size=1, 
-        max_cache_len=max_new_tokens + 16, 
-        device=model.device, 
-        dtype=torch.float16
-    )
+    # input_ids = tokenizer(warmup_prompt, return_tensors="pt").input_ids.to(device)
+    # past_key_values = StaticCache(
+    #     config=model.config, 
+    #     max_batch_size=1, 
+    #     max_cache_len=max_new_tokens + 16, 
+    #     device=model.device, 
+    #     dtype=torch.float16
+    # )
     
-    for i in tqdm(range(5), desc="Warm Up..."):
-        generated = generate(model, input_ids, past_key_values, max_new_tokens, activate_timing=False, verbose=False)
-        past_key_values.reset()
+    # for i in tqdm(range(5), desc="Warm Up..."):
+    #     generated = generate(model, input_ids, past_key_values, max_new_tokens, activate_timing=False, verbose=False)
+    #     past_key_values.reset()
         
     prompt = "How to learn a new language?"
-    input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
-    tputs = []
-    for _ in tqdm(range(10), desc="Test Inference"):
-        generated, tput = generate(model, input_ids, past_key_values, max_new_tokens, activate_timing=True, verbose=False)
-        past_key_values.reset()
-        tputs.append(tput)
-    response = tokenizer.decode(generated[0][input_ids.shape[1]:], skip_special_tokens=True)
-    tputs = np.sort(tputs)[2:-2]
-    org_tput = np.mean(tputs)
-    print(f'[Native] Prompt: {prompt}\nResponse: {response}\nThroughput: {org_tput} toks/s')
-    print(f'[Native] Model Size Before Quant: {get_size_of_model(model) / (1024 ** 2)} MiB')
+    # input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
+    # tputs = []
+    # for _ in tqdm(range(10), desc="Test Inference"):
+    #     generated, tput = generate(model, input_ids, past_key_values, max_new_tokens, activate_timing=True, verbose=False)
+    #     past_key_values.reset()
+    #     tputs.append(tput)
+    # response = tokenizer.decode(generated[0][input_ids.shape[1]:], skip_special_tokens=True)
+    # tputs = np.sort(tputs)[2:-2]
+    # org_tput = np.mean(tputs)
+    # print(f'[Native] Prompt: {prompt}\nResponse: {response}\nThroughput: {org_tput} toks/s')
+    # print(f'[Native] Model Size Before Quant: {get_size_of_model(model) / (1024 ** 2)} MiB')
 
     # # Before Quantization, use vLLM 
     # try:
@@ -203,6 +203,9 @@ def main():
     #         print("No outputs returned from vLLM.")
     #         continue
     #     result = output_list[0]
+
+    #     if result.metrics is not None:
+    #         print(f"Metrics: {result.metrics}")
     #     #print(f"Full result object: {result}")
     #     if result.outputs[0].token_ids:
     #         num_generated_tokens = len(result.outputs[0].token_ids)
@@ -213,42 +216,47 @@ def main():
     # vllm_tput = np.mean(vllm_tputs)
     # print(f'[vLLM] Prompt: {prompt}\nResponse: {last_text_vllm}\nThroughput: {vllm_tput} toks/s')
 
-    del model, past_key_values
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print("Native HF model resources released.")
+    # del model, past_key_values
+    # if torch.cuda.is_available():
+    #     torch.cuda.empty_cache()
+    # print("Native HF model resources released.")
 
     
     # TODO: Quantize    
     print("\n=== Evaluating with vLLM and On-the-fly HQQ Quantization ===")
     try:
         # print("Setting HQQ vLLM and On-the-fly HQQ Quantization...")
-        # set_vllm_hqq_backend(backend=VLLM_HQQ_BACKEND.GEMLITE)
+        set_vllm_hqq_backend(backend=VLLM_HQQ_BACKEND.MARLIN)
 
-        # hqq_weight_bits = 4
-        # hqq_group_size = 64
-        # set_vllm_onthefly_hqq_quant(
-        #     weight_bits=hqq_weight_bits,
-        #     group_size=hqq_group_size,
-        #     quant_mode='static',
-        #     skip_modules=['lm_head']
-        # )
+        hqq_weight_bits = 4
+        hqq_group_size = 128
+        set_vllm_onthefly_hqq_quant(
+            weight_bits=hqq_weight_bits,
+            group_size=hqq_group_size,
+            quant_mode='static',
+            skip_modules=['lm_head']
+        )
 
-        # print(f"Initializing LLM for on-the-fly HQQ quantized model: {model_name}")
-        # llm_engine_hqq_vllm = LLM(
-        #     model=model_name,
-        #     tensor_parallel_size=1,
-        #     max_model_len=4096,
-        #     gpu_memory_utilization=0.85,
-        #     dtype=torch.float16,
-        #     disable_log_stats=False
-        # )
-        llm_engine_hqq_vllm = LLM(model="mobiuslabsgmbh/Llama-3.1-8B-Instruct_4bitgs64_hqq_hf", max_model_len=4096)
+        print(f"Initializing LLM for on-the-fly HQQ quantized model: {model_name}")
+        llm_engine_hqq_vllm = LLM(
+            model=model_name,
+            speculative_config={  
+                "method": "ngram",  
+                "num_speculative_tokens": 5,
+                "prompt_lookup_max": 10
+            },  
+            tensor_parallel_size=1,
+            max_model_len=4096,
+            gpu_memory_utilization=0.85,
+            dtype=torch.float16,
+            disable_log_stats=False
+        )
+        # llm_engine_hqq_vllm = LLM(model="mobiuslabsgmbh/Llama-3.2-3B-Instruct_4bitgs64_hqq_hf", max_model_len=4096)
 
         print("vLLM engine with on-the-fly HQQ initialized successfully.")
 
         print("Warm up vLLM with on-the-fly HQQ quantization...")
-        for _ in range(5):
+        for _ in range(10):
             _ = llm_engine_hqq_vllm.generate([
                 {
                     "prompt": warmup_prompt,
