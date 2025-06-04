@@ -1,14 +1,16 @@
 import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, HqqConfig, StaticCache
 from tqdm.auto import tqdm
 from datasets import load_dataset
 import random
 import numpy as np
-from transformers import StaticCache
+from hqq.utils.patching import prepare_for_inference, recommended_inductor_config_setter
+from hqq.models.hf.base import AutoHQQHFModel
+from hqq.models.base import HQQLinear
+from hqq.core.quantize import BaseQuantizeConfig, HQQBackend
 
-# from peft import get_peft_model, PeftModel
-import argparse
+from quant_cfg import get_quant_config_slm
 
 #####################################################################
 # === SPEC NOTICE ===
@@ -22,10 +24,8 @@ import argparse
 # By default, we use model.generate() for simplicity and general use.
 
 
-def generate(model, input_ids, past_key_values, max_new_tokens):
+def generate(model, input_ids, past_key_values, max_new_tokens=256):
   input_ids = input_ids.clone()
-
-  print("input_ids:", input_ids.shape)
   with torch.no_grad():
     # Prefill
     outputs = model.prefill_forward(
@@ -38,7 +38,6 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
     )
     past_key_values = outputs.past_key_values
     next_token = torch.argmax(outputs.logits, dim=-1)
-
     input_ids = torch.cat([input_ids, next_token], dim=-1)
 
     # Token-by-token Decoding
@@ -61,28 +60,51 @@ def generate(model, input_ids, past_key_values, max_new_tokens):
   return input_ids
 
 
-def load_model(args):
-  # Load your model here
+def get_quant_config():
+  # Each linear layer with the same tag will use a dedicated quantization config
+  q4_config = BaseQuantizeConfig(nbits=4, group_size=64)
+  q3_config = BaseQuantizeConfig(nbits=4, group_size=64)
 
+  quant_config = {
+      'self_attn.q_proj': q4_config,
+      'self_attn.k_proj': q4_config,
+      'self_attn.v_proj': q4_config,
+      'self_attn.o_proj': q4_config,
+
+      'mlp.gate_proj': q3_config,
+      'mlp.up_proj': q3_config,
+      'mlp.down_proj': q3_config,
+      'offload_meta': False
+  }
+  quant_config = BaseQuantizeConfig(nbits=4, group_size=128)
+  return quant_config
+
+
+def load_model():
   # Load your model here
   device = 'cuda:0'
+  # model_name = "devshaheen/llama-3.2-3b-Instruct-finetune"
+  # model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  model_name = "mobiuslabsgmbh/Llama-3.2-3B-Instruct_4bitgs64_hqq_hf"
+  quant_config = get_quant_config()
   model = AutoModelForCausalLM.from_pretrained(
-      "kieann/Llama3.2-edgeai",
+      model_name,
       torch_dtype=torch.float16,
       device_map=device,
-      # local_files_only=True,
+      # quantization_config=quant_config,
   )
   tokenizer = AutoTokenizer.from_pretrained(
-    "kieann/Llama3.2-edgeai"
+      model_name,
+      torch_dtype=torch.float16,
+      device_map=device
   )
-	
-  if torch.cuda.is_available():
-    model = model.cuda()
-
-  model.half()
   model.eval()
-
-  return model, tokenizer 
+  model = torch.compile(
+      model,
+      mode='default',
+      dynamic=False,
+      fullgraph=True)
+  return model, tokenizer
 
 
 def evaluate_ppl(model, tokenizer, device="cuda:0"):
@@ -101,7 +123,7 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
       lm_logits = model(batch).logits
 
     shift_logits = lm_logits[:, :-1, :].contiguous().float()
-    shift_labels = test_enc[:, (i * model.seqlen)                            :((i + 1) * model.seqlen)][:, 1:]
+    shift_labels = test_enc[:, (i * model.seqlen):((i + 1) * model.seqlen)][:, 1:]
 
     loss_fct = nn.CrossEntropyLoss()
     loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)),
@@ -114,18 +136,29 @@ def evaluate_ppl(model, tokenizer, device="cuda:0"):
   return ppl.item()
 
 
-def main(args):
+def main():
   ############## Set Up ##############
   torch.manual_seed(0)
   random.seed(0)
+  recommended_inductor_config_setter()
+  HQQLinear.set_backend(HQQBackend.PYTORCH_COMPILE)  # Compiled Pytorch
 
   max_new_tokens = 256    # Number of new tokens to generate
   device = 'cuda:0'
+  model, tokenizer = load_model()
 
-  model, tokenizer = load_model(args)
+  AutoHQQHFModel.quantize_model(
+      model,
+      quant_config=get_quant_config(),
+      compute_dtype=torch.float16,
+      device=device)
+
+  prepare_for_inference(model, backend="gemlite")
+
+  torch.cuda.empty_cache()
 
   # === (Optional) Uncomment the following lines if using the custom generate() function. ===
-  model.prefill_forward = model.forward
+  # model.prefill_forward = model.forward
 
   warmup_prompt = "Explain what AI is."
   inputs = tokenizer(warmup_prompt, return_tensors="pt").to(device)
@@ -133,6 +166,7 @@ def main(args):
   attention_mask = inputs["attention_mask"]
 
   # === (Optional) Set up StaticCache for manual KV cache management ===
+  # from transformers import StaticCache
   past_key_values = StaticCache(
       config=model.config,
       max_batch_size=1,
@@ -142,23 +176,17 @@ def main(args):
   )
   ####################################################################
 
-  for i in tqdm(range(10), desc="Warm Up..."):
+  for i in tqdm(range(5), desc="Warm Up..."):
     #  === Default: use model.generate() for end-to-end warm-up ===
-    # _ = model.generate(
-    #   input_ids=input_ids,
-    #   attention_mask=attention_mask,
-    #   max_new_tokens=max_new_tokens,
-    #   pad_token_id=tokenizer.eos_token_id,
-    #   use_cache=True,
-    #   past_key_values=past_key_values,
-    # )
-    past_key_values.reset()
     _ = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.eos_token_id,
+        use_cache=True,
+        past_key_values=past_key_values,
     )
+    past_key_values.reset()
 
     # === (Optional) Use custom generate() if uncommented ===
     # generated = generate(model, input_ids, past_key_values, max_new_tokens)
@@ -182,11 +210,13 @@ def main(args):
         attention_mask=attention_mask,
         max_new_tokens=max_new_tokens,
         pad_token_id=tokenizer.eos_token_id,
+        use_cache=True,
+        past_key_values=past_key_values,
     )
+    past_key_values.reset()
 
     # === Optional: Use custom generate() if uncommented ===
     # generated = generate(model, input_ids, past_key_values, max_new_tokens)
-    # past_key_values.reset()
 
     end.record()
     torch.cuda.synchronize()
@@ -222,12 +252,4 @@ def main(args):
 
 
 if __name__ == '__main__':
-
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--pruned", action="store_true")
-  parser.add_argument("--pruned_model", type=str, default=None)
-  parser.add_argument("--tuned_dir", type=str, default=None)
-  parser.add_argument("--lora_model", type=str, default=None)
-  args = parser.parse_args()
-
-  main(args)
+  main()
