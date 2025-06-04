@@ -2,7 +2,7 @@
 
 ## Environment setup
 - conda environment: installed packages are listed in `conda_env.yaml`.
-- pip packages: installed packages are listed in `requirements.txt`.
+- pip packages: required packages are listed in `requirements.txt`.
 
 Note, you cannot actually install this way. Please use the steps below to install environment.
 The requirements.txt and conda_env.yaml are for your reference only.
@@ -14,8 +14,7 @@ conda activate edgeai
 ```
 Install pip dependencies
 ```bash
-pip install torch torchvision xformers transformers huggingface
-pip install hqq datasets
+pip install -r requirements.txt
 ```
 
 ## Instructions on repoduction
