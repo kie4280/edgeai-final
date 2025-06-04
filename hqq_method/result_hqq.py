@@ -12,6 +12,8 @@ from hqq.core.quantize import BaseQuantizeConfig, HQQBackend
 
 from quant_cfg import get_quant_config_slm
 
+torch.manual_seed(14760724067392201151)
+random.seed(14760724067392201151)
 #####################################################################
 # === SPEC NOTICE ===
 # Only "load model" and "generate" function selection can be modified.
@@ -76,7 +78,7 @@ def get_quant_config():
       'mlp.down_proj': q3_config,
       'offload_meta': False
   }
-  quant_config = BaseQuantizeConfig(nbits=4, group_size=128)
+  quant_config = BaseQuantizeConfig(nbits=4, group_size=64)
   return quant_config
 
 
@@ -85,20 +87,27 @@ def load_model():
   device = 'cuda:0'
   # model_name = "devshaheen/llama-3.2-3b-Instruct-finetune"
   # model_name = "meta-llama/Llama-3.2-3B-Instruct-SpinQuant_INT4_EO8"
-  model_name = "meta-llama/Llama-3.2-3B-Instruct"
+  # model_name = "meta-llama/Llama-3.2-1B-Instruct"
+  # model_name = "meta-llama/Llama-3.2-3B"
   # model_name = "unsloth/Llama-3.2-3B-Instruct-bnb-4bit"
+  # model_name="../distillation/torchtune/llama3.2_1B_QAT/epoch_24/"
+  model_name = "kieann/Llama3.2-edgeai"
   quant_config = get_quant_config()
   model = AutoModelForCausalLM.from_pretrained(
       model_name,
       torch_dtype=torch.float16,
       device_map=device,
+      token="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"
       # quantization_config=quant_config,
   )
   tokenizer = AutoTokenizer.from_pretrained(
       model_name,
-      torch_dtype=torch.float16,
-      device_map=device
+      token="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"
   )
+  if torch.cuda.is_available():
+    model = model.cuda()
+  model.half()
+
   model.eval()
   model = torch.compile(
       model,
