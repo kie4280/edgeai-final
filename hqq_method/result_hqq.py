@@ -61,21 +61,6 @@ def generate(model, input_ids, past_key_values, max_new_tokens=256):
 
 
 def get_quant_config():
-  # Each linear layer with the same tag will use a dedicated quantization config
-  q4_config = BaseQuantizeConfig(nbits=4, group_size=64)
-  q3_config = BaseQuantizeConfig(nbits=4, group_size=64)
-
-  quant_config = {
-      'self_attn.q_proj': q4_config,
-      'self_attn.k_proj': q4_config,
-      'self_attn.v_proj': q4_config,
-      'self_attn.o_proj': q4_config,
-
-      'mlp.gate_proj': q3_config,
-      'mlp.up_proj': q3_config,
-      'mlp.down_proj': q3_config,
-      'offload_meta': False
-  }
   quant_config = BaseQuantizeConfig(nbits=4, group_size=64)
   return quant_config
 
@@ -95,12 +80,9 @@ def load_model():
       model_name,
       torch_dtype=torch.float16,
       device_map=device,
-      token="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"
-      # quantization_config=quant_config,
   )
   tokenizer = AutoTokenizer.from_pretrained(
       model_name,
-      token="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"
   )
   if torch.cuda.is_available():
     model = model.cuda()
