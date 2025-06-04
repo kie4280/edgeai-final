@@ -14,8 +14,8 @@ __pycache__/
 *.egg
 *.egg-info
 *.eg
-ckpt
 *.ckpt
+ckpt/
 *.pth
 
 *.ipynb
@@ -39,8 +39,6 @@ lm_cache
 *.log
 *.egg-info
 
-result.csv
-
 llm_pruner/figures
 
-distillation/torchtune
+distillation/torchtune*
