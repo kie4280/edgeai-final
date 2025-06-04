@@ -12,8 +12,6 @@ from hqq.core.quantize import BaseQuantizeConfig, HQQBackend
 
 from quant_cfg import get_quant_config_slm
 
-torch.manual_seed(14760724067392201151)
-random.seed(14760724067392201151)
 #####################################################################
 # === SPEC NOTICE ===
 # Only "load model" and "generate" function selection can be modified.
